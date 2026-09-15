@@ -1223,17 +1223,23 @@ fn the_panel_recommends_the_released_installer_and_not_a_build_from_git() {
         menu.contains("install.sh"),
         "Menu.qml names no install route at all"
     );
+    // A tag, never `latest`. The marketplace reviews an immutable commit and
+    // asks the same of the install path; `releases/latest/download/` follows
+    // whatever release is newest, so what a user runs and what a reviewer read
+    // need not be the same bytes. `every_release_url_names_the_tag_of_this_version`
+    // pins the tag to this tree's version.
     assert!(
-        menu.contains("releases/latest/download/install.sh"),
-        "the installer the panel names is not the one the releases page serves"
+        menu.contains("releases/download/v") && menu.contains("/install.sh"),
+        "the panel must name a tag-pinned installer, not one that follows the \
+         newest release"
     );
 
     // The button that copies a command copies *that* command.
     let copy = qml_function(&menu, "copyInstallCommand");
     assert!(
-        copy.contains("releases/latest/download/install.sh"),
-        "the install button copies something other than the released \
-         installer:\n{copy}"
+        copy.contains("releases/download/v") && copy.contains("/install.sh"),
+        "the install button copies something other than the tag-pinned \
+         released installer:\n{copy}"
     );
     assert!(
         !copy.contains("cargo"),
@@ -1277,6 +1283,51 @@ fn every_release_file_the_docs_name_is_one_the_release_publishes() {
                  release publishes: {assets:?}"
             );
             at = start;
+        }
+    }
+}
+
+/// Every release URL the plugin hands a user names an exact tag.
+///
+/// `releases/latest/download/...` is a mutable pointer: it follows whatever
+/// the newest release happens to be, so what a user runs today and what a
+/// reviewer read are not necessarily the same bytes. The Omarchy marketplace
+/// reviews an immutable commit and asks the same of the install path, and the
+/// generated `install.sh` already fetches its binary from a tag-pinned URL
+/// with that build's SHA-256 written into it — the only mutable link left was
+/// how the user obtains the script itself.
+///
+/// The tag must also be the version this source tree is, so bumping the crate
+/// without updating what the panel tells people to download fails here rather
+/// than sending them a script for a different build.
+#[test]
+fn every_release_url_names_the_tag_of_this_version() {
+    let version = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
+    )
+    .expect("Cargo.toml")
+    .lines()
+    .find_map(|l| {
+        l.strip_prefix("version = \"")
+            .and_then(|v| v.strip_suffix('"'))
+    })
+    .expect("a version in Cargo.toml")
+    .to_string();
+    let want = format!("releases/download/v{version}/");
+
+    for file in ["Menu.qml", "README.md"] {
+        let src = qml(file);
+        assert!(
+            !src.contains("releases/latest/download/"),
+            "{file} points a user at releases/latest/download/, which follows \
+             whatever release is newest; name the tag instead: {want}"
+        );
+        if src.contains("releases/download/") {
+            assert!(
+                src.contains(&want),
+                "{file} names a release tag that is not v{version}, the version \
+                 this tree builds"
+            );
         }
     }
 }

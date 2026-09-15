@@ -276,7 +276,7 @@ to `osm install`; it does not fetch a checksum from the same place it fetched
 the binary, which would check for corruption and for nothing else.
 
 ```bash
-curl -fsSLO https://github.com/n8group-oss/omarchy-session-memory/releases/latest/download/install.sh
+curl -fsSLO https://github.com/n8group-oss/omarchy-session-memory/releases/download/v0.1.0/install.sh
 sh install.sh --dry-run   # prints every step, touches nothing
 sh install.sh
 ```

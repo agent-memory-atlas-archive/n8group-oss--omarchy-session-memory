@@ -808,7 +808,7 @@ Panel {
   // for it — and it stays the documented route on a machine this release has
   // no binary for.
   function copyInstallCommand() {
-    Quickshell.clipboardText = "curl -fsSLO https://github.com/n8group-oss/omarchy-session-memory/releases/latest/download/install.sh && sh install.sh"
+    Quickshell.clipboardText = "curl -fsSLO https://github.com/n8group-oss/omarchy-session-memory/releases/download/v0.1.0/install.sh && sh install.sh"
     actionStatus = "Install command copied — run `sh install.sh --dry-run` first to see every step."
     actionStatusTimer.restart()
   }
@@ -1143,7 +1143,7 @@ Panel {
             text: "Install the engine once, then this widget fills in. The installer "
               + "verifies the binary against the SHA-256 the release workflow built it "
               + "with, which is written into the script itself:\n"
-              + "  curl -fsSLO https://github.com/n8group-oss/omarchy-session-memory/releases/latest/download/install.sh\n"
+              + "  curl -fsSLO https://github.com/n8group-oss/omarchy-session-memory/releases/download/v0.1.0/install.sh\n"
               + "  sh install.sh --dry-run   # prints every step, touches nothing\n"
               + "  sh install.sh\n"
               + "Building from source is in the README, and is the only route on a "
