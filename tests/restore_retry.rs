@@ -354,8 +354,32 @@ fn the_published_snapshot_is_what_the_next_boot_would_restore() {
 
     let next = Server::start("published-next");
     let report = restore::run_restore(&mut conn, next.t(), false).unwrap();
-    assert_eq!(report.state, "succeeded", "{report:?}");
     assert_eq!(report.outcome.created, vec!["alpha".to_string()]);
+
+    // The state is asserted on what this test is about — the session tree came
+    // back — and not on whether the machine running it has a compositor.
+    //
+    // `assert_eq!(report.state, "succeeded")` passed here for as long as it
+    // was only ever run on a desktop. On CI there is no compositor, so the
+    // snapshot's placement is `unknown`, the restore reports that shortfall
+    // honestly, and the run is `partial`. That is the correct behaviour, not a
+    // regression: osm was asked to put windows back and could not. A test that
+    // demands "succeeded" is really demanding a compositor, which is the same
+    // fault as the placement tests that once passed only because Ghostty
+    // happened to be installed.
+    //
+    // So: succeeded, or partial whose every shortfall is about placement.
+    let only_placement = report
+        .outcome
+        .window_outcomes
+        .iter()
+        .all(|(_, o)| format!("{o:?}").contains("Placement"));
+    assert!(
+        report.state == "succeeded"
+            || (report.state == "partial" && only_placement && report.outcome.failed.is_empty()),
+        "the session tree was rebuilt, so the only thing left unfinished may be \
+         window placement: {report:?}"
+    );
 }
 
 /// The other half of the promise: if this boot's snapshot cannot be written,
