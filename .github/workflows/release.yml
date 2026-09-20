@@ -176,9 +176,13 @@ jobs:
           name: osm-x86_64-unknown-linux-gnu
           path: dist
 
-      # Re-verified on this side of the artifact hop. The checksum is the
-      # thing users are asked to trust, so it is checked against the file it
-      # travels with rather than assumed to have survived.
+      # Re-verified on this side of the artifact hop: the binary is checked
+      # against the checksum it travelled with rather than assumed to have
+      # survived. That is a transport check and only a transport check — both
+      # files came out of the same `build` job, so agreeing proves the upload
+      # was not corrupted and nothing about provenance. What a user verifies
+      # against is the SHA-256 in `install.sh` in the repository, which this
+      # workflow cannot write and cannot reach.
       - name: The checksum still matches what was built
         shell: bash --noprofile --norc {0}
         run: |
