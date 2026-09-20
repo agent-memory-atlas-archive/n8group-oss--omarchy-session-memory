@@ -16,12 +16,12 @@ both in the tree; neither has been released or submitted yet.
 
 ## Building
 
-Most people do not need this. [Installing from a
-release](#installing-from-a-release) downloads a prebuilt `osm` and verifies
-it against the SHA-256 that the workflow which built it wrote into the
-installer — no toolchain, no build, and a check that a source install cannot
-make. Build from source to work on osm itself, or on a machine this release
-ships no binary for.
+Most people do not need this. [Installing the engine from a
+release](#installing-the-engine-from-a-release) runs the `install.sh` that
+shipped with the plugin, which downloads a prebuilt `osm` and verifies it
+against a SHA-256 held in this repository — no toolchain, no build, and a
+check that a source install cannot make. Build from source to work on osm
+itself, or on a machine this release ships no binary for.
 
 ```bash
 cargo build --release
@@ -245,10 +245,12 @@ Captures then record tmux alone and succeed, and restores report every
 session's window as `placement_disabled` — the one window outcome that counts
 as finished work rather than a shortfall.
 
-**Two installs, not one.** The Omarchy marketplace installs the QML — the bar
-widget and its menu — and nothing else. `omarchy plugin add` cannot place a
-binary, a systemd unit or a tmux hook, so the engine is installed separately.
-Until it is, the widget says so rather than showing an empty session list.
+**Two installs, not one.** The Omarchy marketplace installs *files* — it
+git-clones this repository into `~/.config/omarchy/plugins/<id>/`, which is how
+`install.sh` reaches you — but it cannot *run* anything: no binary placed on
+`PATH`, no systemd unit enabled, no tmux hook set. So the engine is a second,
+explicit install, and until you do it the widget says so rather than showing
+an empty session list.
 
 ## Installing the plugin
 
@@ -266,24 +268,85 @@ To remove it again:
 omarchy plugin remove io.github.n8group-oss.sessionmemory
 ```
 
-## Installing from a release
+## Installing the engine from a release
 
-Each `v*` tag builds `osm` for `x86_64-unknown-linux-gnu` on a GitHub-hosted
-runner and publishes three files: the binary, its SHA-256, and an `install.sh`
-**with that build's digest written into it**. The script downloads the binary,
-verifies it against the digest it was built with, and hands the verified copy
-to `osm install`; it does not fetch a checksum from the same place it fetched
-the binary, which would check for corruption and for nothing else.
+**The installer came with the plugin. There is nothing to download to get it.**
+
+`install.sh` sits at the root of this repository, so it is part of the exact
+commit the Omarchy marketplace validates — and `omarchy plugin add` git-clones
+this repository into `~/.config/omarchy/plugins/<id>/`, which puts that
+reviewed script on your machine along with the QML. Run the copy you already
+have:
 
 ```bash
-curl -fsSLO https://github.com/n8group-oss/omarchy-session-memory/releases/download/v0.1.0/install.sh
-sh install.sh --dry-run   # prints every step, touches nothing
-sh install.sh
+sh ~/.config/omarchy/plugins/io.github.n8group-oss.sessionmemory/install.sh --dry-run
+sh ~/.config/omarchy/plugins/io.github.n8group-oss.sessionmemory/install.sh
 ```
 
-Arguments are passed through to `osm install`, so `--prefix` works the same
-way there. Nothing in the QML ever downloads anything: the plugin runs the
-engine that is already on the machine, or says there is none.
+The first line prints every step and touches nothing. The panel shows the same
+two commands with the path filled in, and its **Copy install command** button
+copies the dry run.
+
+The script downloads `osm-x86_64-unknown-linux-gnu` from a tag-pinned release
+URL, checks it against a SHA-256 **written into the script in this
+repository**, and refuses to install anything at all if they differ. Arguments
+are passed through to `osm install`, so `--prefix` works the same way there.
+
+### Why the digest lives here and not in the release
+
+An earlier version of this told you to `curl` an `install.sh` out of the
+v0.1.0 release and run it. That script also carried a SHA-256, and the
+marketplace's security review of `58cc3f4` rejected the arrangement — rightly.
+A tag and a release asset are both replaceable. If the release were replaced,
+or the publisher's account taken, the executable script *and* the digest it
+claimed would change together, and the plugin a reviewer had read contained
+nothing to contradict either. The trust anchor was inside the artifact it was
+vouching for.
+
+Now the anchor is in the validated source. The digest is a literal in
+`install.sh` in this tree; the marketplace reviews that commit; `omarchy
+plugin add` copies it verbatim. Nothing is fetched before anything is
+executed, so there is no script to verify before running and no chicken and
+egg to solve. `tests/installer.rs` keeps it honest, including a check that the
+in-tree digest is the one the release actually published — it fetches the
+release's `.sha256` and compares, and skips with a printed reason when there
+is no network.
+
+The release still publishes `osm-x86_64-unknown-linux-gnu.sha256` beside the
+binary. That is a convenience for anyone reading the releases page, not the
+trust root, and the installer deliberately does not read it: verifying a
+download against a checksum served by whoever served the download checks for
+corruption and for nothing else.
+
+Nothing in the QML ever downloads anything: the plugin runs the engine that is
+already on the machine, or says there is none.
+
+### Cutting a release
+
+The digest of a build cannot be known before the build exists, so the value in
+`install.sh` is always written **after** the release it names. That ordering is
+the one sharp edge here, and it is deliberate rather than an oversight:
+
+1. On a branch — not `main` — bump `version` in `Cargo.toml` and
+   `manifest.json` to the new version. From this moment
+   `the_installer_downloads_from_the_tag_of_this_version` fails, because
+   `install.sh` still names the previous release. That is correct: the tree is
+   mid-release and is not a tree to submit for validation.
+2. Push the `vX.Y.Z` tag at that branch. `release.yml` checks that the tag,
+   the crate and the manifest agree, builds in a digest-pinned
+   `rust:1-bookworm` container, and publishes the binary and its `.sha256`.
+3. Take the published digest — `curl -fsSL .../vX.Y.Z/osm-x86_64-unknown-linux-gnu.sha256`,
+   or read it off the release page — and write it, with the new `TAG`, into
+   `install.sh`. Commit that on the same branch. The suite goes green again,
+   and `the_in_tree_digest_is_the_one_that_release_published` now really
+   checks the published asset.
+4. Merge to `main`, so `main` is never red, and submit **that** commit to the
+   marketplace for validation.
+
+Do not "fix" a digest mismatch by copying whatever the release currently
+serves into `install.sh`. A mismatch is either an unfinished release or the
+substitution this whole arrangement exists to catch, and those need telling
+apart before anything is committed.
 
 Building from source works too, and is the only route on a non-x86_64
 machine:
@@ -297,10 +360,11 @@ cargo build --release --locked
 ## Installing and removing the engine
 
 `osm install` places everything the Omarchy marketplace cannot: the binary,
-both systemd user units, and the tmux hooks. `omarchy plugin add` copies QML
-and nothing else, so the engine is a separate install — and, more to the
-point, a separate *uninstall*: a removal that left the daemon enabled and the
-hooks firing at a binary that is no longer there would be worse than none.
+both systemd user units, and the tmux hooks. `omarchy plugin add` only copies
+files into the plugin directory, so the engine is a separate install — and,
+more to the point, a separate *uninstall*: a removal that left the daemon
+enabled and the hooks firing at a binary that is no longer there would be
+worse than none.
 
 A tmux hook is **server state**: it lives in the tmux server process, nothing
 writes it to disk, and it dies with that server. So `osm install` can only
@@ -424,17 +488,19 @@ osm install-hooks
 
 `manifest.json`, `BarWidget.qml` and `Menu.qml` are the marketplace plugin: a
 bar icon for the Omarchy Quattro shell and the menu behind it. They are
-installed with `omarchy plugin add`, which copies QML **and nothing else** —
-it cannot place a binary, a systemd unit or a tmux hook. So the plugin and
-the engine are two installs, and the first thing the widget has to be able to
-say is that the engine is not there.
+installed with `omarchy plugin add`, which git-clones this repository into
+`~/.config/omarchy/plugins/<id>/`. That copies files — `install.sh` among them
+— and **runs nothing**: it cannot place a binary on `PATH`, enable a systemd
+unit or set a tmux hook. So the plugin and the engine are two installs, and
+the first thing the widget has to be able to say is that the engine is not
+there.
 
 It says it. The widget checks four things, in this order, and renders what it
 found rather than an empty-but-fine state:
 
 | what it found | bar | menu |
 |---|---|---|
-| engine missing (`osm` not on `PATH`) | muted broken-link icon | says the marketplace copies QML only, and gives the install command |
+| engine missing (`osm` not on `PATH`) | muted broken-link icon | says the marketplace does not install the engine, and gives the two commands, naming the `install.sh` that shipped with the plugin |
 | protocol mismatch (`protocol_version` is not 1) | warning icon | names the version the plugin speaks and the one the engine speaks, and renders **no** session list |
 | not ready (`ready: false`) | warning icon | the engine's `message`, verbatim |
 | healthy | icon plus the session count | snapshot freshness, sessions grouped by workspace, resumable conversations |

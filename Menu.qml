@@ -791,25 +791,44 @@ Panel {
         + "snapshot #" + from + " was used."
   }
 
-  // The released installer, not a build from git.
+  // Where the installer that shipped with this plugin actually is.
   //
-  // Each `v*` tag publishes the binary, its SHA-256, and an `install.sh` with
-  // *that build's* digest written into it by the workflow that built it. The
-  // script checks the download against the digest it was built with rather
-  // than against a checksum fetched from the same server as the file, which
-  // would check for corruption and for nothing else.
+  // Deliberately derived, not written out: `install.sh` is a sibling of this
+  // file by construction. `omarchy plugin add` git-clones the whole
+  // repository into ~/.config/omarchy/plugins/<id>/, and `omarchy plugin
+  // clone`'s `copy_plugin` does `cp -aL "$source_dir/."` because
+  // `manifest.json` is at the repository root — either way every root file
+  // arrives together. The QML's own URL is then the one answer that stays
+  // right after a clone renames the plugin id, or when a developer runs this
+  // out of a checkout. `manifest.json` holds the id; nothing restates it here.
+  readonly property string installerPath: {
+    var u = String(Qt.resolvedUrl("install.sh"))
+    if (u.indexOf("file://") === 0) u = u.slice(7)
+    return decodeURIComponent(u)
+  }
+
+  // The installer the plugin came with — not one fetched from a release.
   //
-  // What this replaced was a one-liner that fetched the repository at whatever
-  // state its branch happened to be in, built it with a full Rust toolchain,
-  // and ran the result. The Omarchy marketplace's automated review reads a
-  // line like that as `package-manager` plus `remote-build`, and it is right
-  // to: it is slower, it needs far more installed, and it verifies nothing.
-  // Building from source belongs in the README, where a developer will look
-  // for it — and it stays the documented route on a machine this release has
-  // no binary for.
+  // What this replaced was `curl`-ing `install.sh` out of the v0.1.0 release
+  // and running it. The Omarchy marketplace's security review rejected that
+  // chain and was right to: the script and the binary digest it carried came
+  // from the same mutable release, so replacing the release — or taking the
+  // publisher's account — changes the executable and its claimed digest
+  // together, and the plugin a reviewer validated vouches for neither.
+  //
+  // The script next to this file is in the tree that was reviewed, and the
+  // SHA-256 in it is part of that reviewed commit. There is nothing to
+  // download before running it and nothing to verify before executing it.
+  //
+  // Before that it was a one-liner that fetched the repository at whatever
+  // state its branch happened to be in, built it with a full Rust toolchain
+  // and ran the result — `package-manager` plus `remote-build` to the
+  // marketplace's automated review, and rightly so. Building from source
+  // belongs in the README, where a developer will look for it, and it stays
+  // the documented route on a machine this release has no binary for.
   function copyInstallCommand() {
-    Quickshell.clipboardText = "curl -fsSLO https://github.com/n8group-oss/omarchy-session-memory/releases/download/v0.1.0/install.sh && sh install.sh"
-    actionStatus = "Install command copied — run `sh install.sh --dry-run` first to see every step."
+    Quickshell.clipboardText = "sh " + root.shellQuote(root.installerPath) + " --dry-run"
+    actionStatus = "Dry-run command copied — it prints every step and touches nothing. Run it again without --dry-run to install."
     actionStatusTimer.restart()
   }
 
@@ -1141,11 +1160,11 @@ Panel {
             font.pixelSize: Style.font.caption
             color: root.dim
             text: "Install the engine once, then this widget fills in. The installer "
-              + "verifies the binary against the SHA-256 the release workflow built it "
-              + "with, which is written into the script itself:\n"
-              + "  curl -fsSLO https://github.com/n8group-oss/omarchy-session-memory/releases/download/v0.1.0/install.sh\n"
-              + "  sh install.sh --dry-run   # prints every step, touches nothing\n"
-              + "  sh install.sh\n"
+              + "came with the plugin — nothing is downloaded to get it — and it "
+              + "verifies the binary against the SHA-256 written into this plugin's "
+              + "own source, refusing to install anything on a mismatch:\n"
+              + "  sh " + root.installerPath + " --dry-run   # prints every step, touches nothing\n"
+              + "  sh " + root.installerPath + "\n"
               + "Building from source is in the README, and is the only route on a "
               + "machine that is not x86_64."
           }
