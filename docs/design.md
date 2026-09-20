@@ -51,7 +51,7 @@ Four surfaces, with clear ownership boundaries:
 | Surface | Contents | Installed by |
 |---|---|---|
 | Marketplace plugin | `manifest.json`, `BarWidget.qml`, `Menu.qml` | `omarchy plugin add` |
-| Engine binary | `osm` | `install.sh` / AUR package |
+| Engine binary | `osm` | `install.sh` (ships in the plugin) / AUR package |
 | systemd user units | `osm.service`, `osm-restore.service` | engine install |
 | tmux hooks | namespaced `set-hook` entries | `osm install-hooks` |
 
@@ -842,17 +842,35 @@ upgrade instructions instead of a session list.
 
 ## Distribution and lifecycle
 
-Installing the marketplace plugin copies QML and `manifest.json` only. It cannot
-install a binary, enable systemd units, or configure tmux — so the plugin must
-handle the engine-missing state gracefully rather than appear installed and be
-silently broken.
+Installing the marketplace plugin gets the user the QML and every other file at
+the repository root — `omarchy plugin add` git-clones the repository into
+`~/.config/omarchy/plugins/<id>/`, and `omarchy plugin clone`'s `copy_plugin`
+does `cp -aL "$source_dir/."` when `manifest.json` is at the root. What it
+cannot do is install a binary, enable systemd units, or configure tmux, so the
+plugin must handle the engine-missing state gracefully rather than appear
+installed and be silently broken.
 
-The engine is distributed as a GitHub release binary with per-architecture
-SHA-256 checksums, with the digest pinned inside the matching `install.sh`
-release. An AUR package that owns the binary and the user units is the intended
-path once the project stabilises; at that point the marketplace plugin declares
-the package as a dependency in its README. The QML never downloads or executes
-an installer itself.
+The engine is distributed as a GitHub release binary with a per-architecture
+SHA-256 checksum. **The digest users verify against lives in `install.sh` at
+the repository root, not in the release.** That is the correction the Omarchy
+marketplace's security review of `58cc3f4` required: an `install.sh` downloaded
+from the release carried a digest from that same mutable release, so replacing
+the release — or taking the publisher's account — changed the executable and
+its claimed digest together, and the validated plugin contradicted neither. The
+anchor has to sit in the artifact that is reviewed, which is the source tree.
+
+Because the installer arrives with the plugin, nothing is fetched before
+anything is executed and there is no bootstrap to verify. The consequence is
+that the digest is always written into `install.sh` *after* the release it
+names — the digest of a build does not exist before the build — so cutting a
+release is a bump, a tag, and then a commit writing the published digest back.
+README.md's "Cutting a release" is the procedure; `tests/installer.rs` is what
+holds it.
+
+An AUR package that owns the binary and the user units is the intended path
+once the project stabilises; at that point the marketplace plugin declares the
+package as a dependency in its README. The QML never downloads or executes an
+installer itself.
 
 `osm uninstall` is the single teardown path: it stops and disables both units,
 removes them, removes the engine's tmux hooks while preserving the user's own,
