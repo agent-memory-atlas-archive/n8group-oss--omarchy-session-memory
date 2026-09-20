@@ -12,12 +12,16 @@ name: release
 # digest, for the same reason and with more force. `actions/checkout@v4` and
 # `rust:1-bookworm` are references someone else can move; whoever moves one
 # chooses what runs in this workflow, and this workflow builds the binary users
-# download *and* writes the checksum that vouches for it. A step that replaced
-# the binary would produce a checksum matching its own tampering, so the
-# checksum proves the artifact survived the trip and nothing at all about where
-# it came from. A commit SHA and an image digest cannot be pointed at other
-# content; a tag is a promise, and the version comment after each `@` says
-# which promise was reviewed.
+# download. A step that replaced the binary would produce a checksum matching
+# its own tampering, so the published checksum proves the artifact survived the
+# trip and nothing at all about where it came from. A commit SHA and an image
+# digest cannot be pointed at other content; a tag is a promise, and the version
+# comment after each `@` says which promise was reviewed.
+#
+# What a user actually verifies against is the SHA-256 in `install.sh` at the
+# repository root — part of the commit the Omarchy marketplace validated, and
+# written there by hand *after* a release, because the digest of a build does
+# not exist before the build. See "Cutting a release" in README.md.
 #
 # The cost is deliberate: nothing here picks up a new Rust or a patched action
 # on its own. Refreshing a pin is an edit to this file, with the version
@@ -106,58 +110,43 @@ jobs:
       - name: Build
         run: cargo build --release --locked --bin osm
 
-      - name: Checksum, and the install script that pins it
+      # The checksum, and only the checksum.
+      #
+      # This step used to also generate an `install.sh` carrying this build's
+      # digest, which the release published and the panel told users to
+      # download. The marketplace's security review of 58cc3f4 rejected that
+      # chain: the script and the digest it claimed came from the same mutable
+      # release, so replacing the release — or taking the publisher's account
+      # — changes both together, and the reviewed plugin contained nothing to
+      # contradict either. The trust anchor was inside the artifact it was
+      # vouching for.
+      #
+      # `install.sh` now lives at the repository root, in the tree the
+      # marketplace validates, and `omarchy plugin add` git-clones it onto the
+      # user's machine along with the QML. This workflow deliberately does not
+      # publish a second copy: one would reopen the flagged path for anyone
+      # who found it on the releases page, and it could not even be made
+      # correct — at the moment this tag is pushed, the in-tree script still
+      # names the *previous* release's digest, because the digest of this
+      # build does not exist until this step has run. Writing the published
+      # digest back into install.sh is a commit after the release, and
+      # README.md's "Cutting a release" spells the order out.
+      #
+      # The `.sha256` stays published. It is a convenience for a person
+      # comparing by hand, and it is what
+      # `tests/installer.rs::the_in_tree_digest_is_the_one_that_release_published`
+      # reads to check the in-tree anchor from outside. It is not what the
+      # installer verifies against, and a sibling test forbids it ever
+      # becoming so: a checksum served by whoever served the binary proves the
+      # download was not corrupted and nothing else.
+      - name: Checksum
         shell: bash --noprofile --norc {0}
-        env:
-          TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'UNRELEASED' }}
         run: |
           set -eu
           mkdir -p dist
           cp target/release/osm dist/osm-x86_64-unknown-linux-gnu
           cd dist
           sha256sum osm-x86_64-unknown-linux-gnu > osm-x86_64-unknown-linux-gnu.sha256
-          digest="$(cut -d' ' -f1 osm-x86_64-unknown-linux-gnu.sha256)"
-          # The digest is written into install.sh at build time, from this
-          # build. A script that fetched a checksum file next to the binary
-          # would verify the download against whatever the same server chose
-          # to serve — which checks for corruption and for nothing else.
-          cat > install.sh <<INSTALL
-          #!/bin/sh
-          # Installs the osm engine for the Omarchy Session Memory plugin.
-          #
-          # The digest below was written by the release workflow that built
-          # this exact binary. Do not "fix" it by fetching one at run time.
-          set -eu
-
-          TAG="${TAG}"
-          SHA256="${digest}"
-          URL="https://github.com/n8group-oss/omarchy-session-memory/releases/download/\${TAG}/osm-x86_64-unknown-linux-gnu"
-
-          arch="\$(uname -m)"
-          if [ "\$arch" != "x86_64" ]; then
-            echo "this release ships x86_64-unknown-linux-gnu only; this machine is \$arch" >&2
-            echo "build from source instead: https://github.com/n8group-oss/omarchy-session-memory" >&2
-            exit 1
-          fi
-
-          tmp="\$(mktemp -d)"
-          # Not exec'd below, precisely so this trap still runs: \$tmp holds an
-          # executable copy of the engine, and leaving it in /tmp would be
-          # leaving a binary behind on a machine that asked for one install.
-          trap 'rm -rf "\$tmp"' EXIT INT TERM
-
-          echo "downloading osm \${TAG}"
-          curl -fsSL -o "\$tmp/osm" "\$URL"
-          echo "\${SHA256}  \$tmp/osm" | sha256sum -c -
-          chmod +x "\$tmp/osm"
-
-          # Arguments are passed straight through to \`osm install\`, so
-          #   sh install.sh --dry-run
-          # prints every step and touches nothing. \`osm install\` copies the
-          # binary it is running, which is the verified one in \$tmp.
-          "\$tmp/osm" install "\$@"
-          INSTALL
-          chmod +x install.sh
           ls -l
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -196,7 +185,6 @@ jobs:
           set -eu
           cd dist
           sha256sum -c osm-x86_64-unknown-linux-gnu.sha256
-          grep -q "$(cut -d' ' -f1 osm-x86_64-unknown-linux-gnu.sha256)" install.sh
 
       - name: Publish
         env:
@@ -209,5 +197,4 @@ jobs:
             --title "$TAG" \
             --generate-notes \
             dist/osm-x86_64-unknown-linux-gnu \
-            dist/osm-x86_64-unknown-linux-gnu.sha256 \
-            dist/install.sh
+            dist/osm-x86_64-unknown-linux-gnu.sha256

@@ -1260,17 +1260,32 @@ fn the_panel_recommends_the_shipped_installer_and_not_a_build_from_git() {
     );
 }
 
-/// And what it names is what a release actually contains.
+/// A release publishes the engine and its checksum — and no installer.
 ///
-/// A panel recommending `install.sh` from the releases page is only better
-/// than a source build if that file is there. Both halves are read from the
-/// repository rather than assumed: the file names out of the panel, the
-/// published assets out of the workflow that uploads them.
+/// This used to assert the opposite: that `install.sh` was among the
+/// published assets, because the panel told people to download it. The
+/// security review of `58cc3f4` ended that, and leaving a script on the
+/// releases page would leave the flagged path open for anyone who found it
+/// there instead of reading the README.
+///
+/// Publishing the *in-tree* script at tag time cannot be made correct either,
+/// and this is the part worth writing down. The digest of a build does not
+/// exist until the build does, so at the moment a `vX.Y.Z` tag is pushed the
+/// script in the tree still names the previous release. Uploading it as a
+/// vX.Y.Z asset would publish an installer that installs vX.Y.Z-1 under the
+/// new version's name. "Identical to the in-tree one" and "correct for this
+/// release" are not both available, so the release publishes no installer at
+/// all and the README says where the real one is.
+///
+/// `osm-x86_64-unknown-linux-gnu.sha256` stays. It is what
+/// `the_in_tree_digest_is_the_one_that_release_published` reads to check the
+/// anchor from outside, and it is what a person comparing by hand would look
+/// for. It is a convenience, not the trust root — the installer does not
+/// fetch it, and `tests/installer.rs` forbids that.
 #[test]
-fn every_release_file_the_docs_name_is_one_the_release_publishes() {
+fn a_release_publishes_the_engine_and_its_checksum_and_no_installer() {
     let assets = published_assets();
     for expected in [
-        "install.sh",
         "osm-x86_64-unknown-linux-gnu",
         "osm-x86_64-unknown-linux-gnu.sha256",
     ] {
@@ -1279,9 +1294,27 @@ fn every_release_file_the_docs_name_is_one_the_release_publishes() {
             "the release workflow does not publish {expected}: {assets:?}"
         );
     }
+    assert!(
+        !assets.iter().any(|a| a == "install.sh"),
+        "the release workflow publishes install.sh again. The installer ships \
+         in the plugin tree, where the marketplace validates it; a copy on the \
+         releases page is the self-vouching artifact the review rejected, and \
+         at tag time the in-tree script still names the previous release's \
+         digest so it could not be published correctly anyway: {assets:?}"
+    );
 
+    let wf = std::fs::read_to_string(".github/workflows/release.yml")
+        .expect(".github/workflows/release.yml exists");
+    assert!(
+        !wf.contains("cat > install.sh"),
+        "the release workflow still generates an install.sh. There is one \
+         installer, in the tree, and a second one written at build time is a \
+         second answer to the question the anchor exists to settle."
+    );
+
+    // Nothing anywhere may name a release asset that no release publishes.
     let needle = "releases/latest/download/";
-    for file in ["Menu.qml", "README.md"] {
+    for file in ["Menu.qml", "README.md", "install.sh"] {
         let src = qml(file);
         let mut at = 0usize;
         while let Some(found) = src[at..].find(needle) {
