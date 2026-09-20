@@ -245,10 +245,12 @@ Captures then record tmux alone and succeed, and restores report every
 session's window as `placement_disabled` — the one window outcome that counts
 as finished work rather than a shortfall.
 
-**Two installs, not one.** The Omarchy marketplace installs the QML — the bar
-widget and its menu — and nothing else. `omarchy plugin add` cannot place a
-binary, a systemd unit or a tmux hook, so the engine is installed separately.
-Until it is, the widget says so rather than showing an empty session list.
+**Two installs, not one.** The Omarchy marketplace installs *files* — it
+git-clones this repository into `~/.config/omarchy/plugins/<id>/`, which is how
+`install.sh` reaches you — but it cannot *run* anything: no binary placed on
+`PATH`, no systemd unit enabled, no tmux hook set. So the engine is a second,
+explicit install, and until you do it the widget says so rather than showing
+an empty session list.
 
 ## Installing the plugin
 
@@ -358,10 +360,11 @@ cargo build --release --locked
 ## Installing and removing the engine
 
 `osm install` places everything the Omarchy marketplace cannot: the binary,
-both systemd user units, and the tmux hooks. `omarchy plugin add` copies QML
-and nothing else, so the engine is a separate install — and, more to the
-point, a separate *uninstall*: a removal that left the daemon enabled and the
-hooks firing at a binary that is no longer there would be worse than none.
+both systemd user units, and the tmux hooks. `omarchy plugin add` only copies
+files into the plugin directory, so the engine is a separate install — and,
+more to the point, a separate *uninstall*: a removal that left the daemon
+enabled and the hooks firing at a binary that is no longer there would be
+worse than none.
 
 A tmux hook is **server state**: it lives in the tmux server process, nothing
 writes it to disk, and it dies with that server. So `osm install` can only
@@ -485,17 +488,19 @@ osm install-hooks
 
 `manifest.json`, `BarWidget.qml` and `Menu.qml` are the marketplace plugin: a
 bar icon for the Omarchy Quattro shell and the menu behind it. They are
-installed with `omarchy plugin add`, which copies QML **and nothing else** —
-it cannot place a binary, a systemd unit or a tmux hook. So the plugin and
-the engine are two installs, and the first thing the widget has to be able to
-say is that the engine is not there.
+installed with `omarchy plugin add`, which git-clones this repository into
+`~/.config/omarchy/plugins/<id>/`. That copies files — `install.sh` among them
+— and **runs nothing**: it cannot place a binary on `PATH`, enable a systemd
+unit or set a tmux hook. So the plugin and the engine are two installs, and
+the first thing the widget has to be able to say is that the engine is not
+there.
 
 It says it. The widget checks four things, in this order, and renders what it
 found rather than an empty-but-fine state:
 
 | what it found | bar | menu |
 |---|---|---|
-| engine missing (`osm` not on `PATH`) | muted broken-link icon | says the marketplace copies QML only, and gives the install command |
+| engine missing (`osm` not on `PATH`) | muted broken-link icon | says the marketplace does not install the engine, and gives the two commands, naming the `install.sh` that shipped with the plugin |
 | protocol mismatch (`protocol_version` is not 1) | warning icon | names the version the plugin speaks and the one the engine speaks, and renders **no** session list |
 | not ready (`ready: false`) | warning icon | the engine's `message`, verbatim |
 | healthy | icon plus the session count | snapshot freshness, sessions grouped by workspace, resumable conversations |
