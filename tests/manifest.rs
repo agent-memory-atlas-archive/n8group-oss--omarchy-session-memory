@@ -1188,7 +1188,8 @@ fn published_assets() -> Vec<String> {
         .collect()
 }
 
-/// The panel points at the released installer, not at a build from git.
+/// The panel points at the installer the plugin shipped with, not at a build
+/// from git and not at a download.
 ///
 /// The Omarchy marketplace's automated review flagged this submission
 /// `security-review-required`, and two of the capabilities it named were
@@ -1198,24 +1199,31 @@ fn published_assets() -> Vec<String> {
 /// > `cargo install --git https://github.com/…/omarchy-session-memory osm`
 ///
 /// which asks the user to fetch whatever is on a branch right now, build it
-/// with a full toolchain, and run it. The project already publishes something
-/// strictly better and faster: a release binary whose SHA-256 is written into
-/// the matching `install.sh` by the workflow that built it, so the script
-/// verifies the download against the digest of the exact build rather than
-/// against a checksum fetched from the same place as the file.
+/// with a full toolchain, and run it. That half of this test has always been
+/// right and is unchanged.
 ///
-/// A widget that recommends the worse route to every user who installs the
-/// plugin is the widget's own recommendation, not a packaging detail. Whether
-/// a *developer* builds from source is the README's business.
+/// The other half was not. It used to require the panel to name
+/// `releases/download/v…/install.sh` — a script downloaded from the release
+/// and executed. The human security review of `58cc3f4` rejected that chain:
+/// the script and the binary digest it carried came from the same mutable
+/// release, so replacing the release, or taking the publisher's account,
+/// changes the executable and its claimed digest together and the validated
+/// plugin can contradict neither. Pinning the tag made the *binary*
+/// immutable; it did nothing about the script, because a tag is movable and
+/// a release asset is replaceable.
+///
+/// So the panel now names the copy `omarchy plugin add` already put on the
+/// machine, and this test requires that instead. Whether a *developer*
+/// builds from source is still the README's business.
 #[test]
-fn the_panel_recommends_the_released_installer_and_not_a_build_from_git() {
+fn the_panel_recommends_the_shipped_installer_and_not_a_build_from_git() {
     let menu = qml("Menu.qml");
 
     for pattern in ["cargo install", "cargo build", "--git http"] {
         assert!(
             !menu.contains(pattern),
             "Menu.qml still tells the user to {pattern:?}; the marketplace \
-             reads that as package-manager + remote-build, and the release \
+             reads that as package-manager + remote-build, and the shipped \
              installer is both safer and faster"
         );
     }
@@ -1223,27 +1231,32 @@ fn the_panel_recommends_the_released_installer_and_not_a_build_from_git() {
         menu.contains("install.sh"),
         "Menu.qml names no install route at all"
     );
-    // A tag, never `latest`. The marketplace reviews an immutable commit and
-    // asks the same of the install path; `releases/latest/download/` follows
-    // whatever release is newest, so what a user runs and what a reviewer read
-    // need not be the same bytes. `every_release_url_names_the_tag_of_this_version`
-    // pins the tag to this tree's version.
+
+    // The installer is a file next to this one, reached by resolving the
+    // QML's own URL — never a URL the panel hands a user to fetch.
     assert!(
-        menu.contains("releases/download/v") && menu.contains("/install.sh"),
-        "the panel must name a tag-pinned installer, not one that follows the \
-         newest release"
+        menu.contains("Qt.resolvedUrl(\"install.sh\")"),
+        "the panel must name the installer that shipped with the plugin, \
+         resolved from its own location"
     );
+    for line in without_comments(&menu).lines() {
+        assert!(
+            !(line.contains("install.sh") && line.contains("http")),
+            "the panel points a user at a downloadable install.sh, which puts \
+             the trust anchor back inside the artifact it vouches for:\n{line}"
+        );
+    }
 
     // The button that copies a command copies *that* command.
     let copy = qml_function(&menu, "copyInstallCommand");
     assert!(
-        copy.contains("releases/download/v") && copy.contains("/install.sh"),
-        "the install button copies something other than the tag-pinned \
-         released installer:\n{copy}"
+        copy.contains("root.installerPath"),
+        "the install button copies something other than the shipped \
+         installer:\n{copy}"
     );
     assert!(
-        !copy.contains("cargo"),
-        "the install button still copies a source build:\n{copy}"
+        !copy.contains("cargo") && !copy.contains("http"),
+        "the install button still copies a source build or a download:\n{copy}"
     );
 }
 
@@ -1287,19 +1300,27 @@ fn every_release_file_the_docs_name_is_one_the_release_publishes() {
     }
 }
 
-/// Every release URL the plugin hands a user names an exact tag.
+/// Every release URL this project hands a user names an exact tag.
 ///
 /// `releases/latest/download/...` is a mutable pointer: it follows whatever
 /// the newest release happens to be, so what a user runs today and what a
 /// reviewer read are not necessarily the same bytes. The Omarchy marketplace
-/// reviews an immutable commit and asks the same of the install path, and the
-/// generated `install.sh` already fetches its binary from a tag-pinned URL
-/// with that build's SHA-256 written into it — the only mutable link left was
-/// how the user obtains the script itself.
+/// reviews an immutable commit and asks the same of the install path.
 ///
 /// The tag must also be the version this source tree is, so bumping the crate
-/// without updating what the panel tells people to download fails here rather
-/// than sending them a script for a different build.
+/// without updating what gets downloaded fails here rather than fetching an
+/// engine from a different build.
+///
+/// Two things changed when the installer moved into the tree. `install.sh`
+/// joined the list of files checked — it is now the only one that names a
+/// release URL at all, so leaving it out would have left this test looking at
+/// nothing, and the last assertion says so if that ever happens again. And
+/// the scan is scoped to *this* repository's releases: the old version asked
+/// whether a file contained `releases/download/` anywhere and then demanded
+/// this version's tag, which passed only because README.md happened to
+/// contain a v0.1.0 URL alongside the `tmux/tmux/releases/download/3.7c/`
+/// tarball it documents building from. Remove the former and it failed on the
+/// latter — it had been reading another project's URLs the whole time.
 #[test]
 fn every_release_url_names_the_tag_of_this_version() {
     let version = std::fs::read_to_string(
@@ -1313,21 +1334,52 @@ fn every_release_url_names_the_tag_of_this_version() {
     })
     .expect("a version in Cargo.toml")
     .to_string();
-    let want = format!("releases/download/v{version}/");
+    let ours = "n8group-oss/omarchy-session-memory/releases/";
+    let want = format!("{ours}download/v{version}/");
 
-    for file in ["Menu.qml", "README.md"] {
-        let src = qml(file);
+    let mut seen = 0usize;
+    for file in ["Menu.qml", "README.md", "install.sh"] {
+        // `install.sh` builds its URL as `.../${TAG}/...`, so the tag is
+        // written once rather than twice. Expanding it here reads what the
+        // script will actually fetch, which is the thing under test — and an
+        // install.sh that lost the assignment leaves a literal `${TAG}` in
+        // the URL and fails below, which is the right answer.
+        let src = match file {
+            "install.sh" => {
+                let raw = qml(file);
+                let tag = raw
+                    .lines()
+                    .find_map(|l| {
+                        l.trim()
+                            .strip_prefix("TAG=")
+                            .map(|v| v.trim_matches('"').to_string())
+                    })
+                    .expect("install.sh sets TAG=");
+                raw.replace("${TAG}", &tag)
+            }
+            _ => qml(file),
+        };
         assert!(
-            !src.contains("releases/latest/download/"),
+            !src.contains(&format!("{ours}latest/download/")),
             "{file} points a user at releases/latest/download/, which follows \
              whatever release is newest; name the tag instead: {want}"
         );
-        if src.contains("releases/download/") {
+        let mut at = 0usize;
+        while let Some(found) = src[at..].find(&format!("{ours}download/")) {
+            let start = at + found;
+            seen += 1;
             assert!(
-                src.contains(&want),
-                "{file} names a release tag that is not v{version}, the version \
-                 this tree builds"
+                src[start..].starts_with(&want),
+                "{file} names a release of this project at a tag that is not \
+                 v{version}, the version this tree builds:\n{}",
+                &src[start..(start + want.len() + 40).min(src.len())]
             );
+            at = start + 1;
         }
     }
+    assert!(
+        seen > 0,
+        "no file names a release URL for this project at all — this check is \
+         not looking at anything, and the engine has to come from somewhere"
+    );
 }

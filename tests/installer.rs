@@ -277,3 +277,89 @@ fn the_in_tree_digest_is_the_one_that_release_published() {
          it is."
     );
 }
+
+/// Nothing in the tree still tells a user to download a script and run it.
+///
+/// The finding was not only that the released `install.sh` was self-vouching;
+/// it was that the plugin *instructed* people onto that path. Shipping a
+/// verified installer while the panel still recommends the downloaded one
+/// fixes nothing.
+#[test]
+fn nothing_tells_a_user_to_download_the_installer_and_run_it() {
+    for file in ["Menu.qml", "README.md"] {
+        let src = std::fs::read_to_string(root().join(file)).expect(file);
+        for line in src.lines() {
+            let l = line.trim();
+            assert!(
+                !(l.contains("/install.sh") && l.contains("http")),
+                "{file} still points a user at a downloadable install.sh. The \
+                 installer ships with the plugin; naming a URL for it puts the \
+                 trust anchor back inside the artifact it vouches for:\n{l}"
+            );
+        }
+    }
+}
+
+/// And what they point at instead is the copy the plugin actually installs.
+///
+/// The plugin id is written down exactly once, in `manifest.json`. The README
+/// has to show a concrete command, so it names
+/// `~/.config/omarchy/plugins/<id>/install.sh` — and that string is checked
+/// against the manifest here rather than trusted to have been typed right.
+///
+/// `Menu.qml` does not restate the id at all. `install.sh` is a sibling of
+/// `Menu.qml` by construction, so the panel derives the path from its own URL:
+/// that is still correct after `omarchy plugin clone` renames the id, and in a
+/// developer's checkout, neither of which a hard-coded path survives.
+#[test]
+fn the_panel_and_the_readme_name_the_path_the_plugin_installs_to() {
+    let raw = std::fs::read_to_string(root().join("manifest.json")).expect("manifest.json");
+    let m: serde_json::Value = serde_json::from_str(&raw).expect("manifest is valid JSON");
+    let id = m["id"].as_str().expect("an id in manifest.json");
+    let want = format!("~/.config/omarchy/plugins/{id}/install.sh");
+
+    let readme = std::fs::read_to_string(root().join("README.md")).expect("README.md");
+    assert!(
+        readme.contains(&want),
+        "README.md does not name the installer where `omarchy plugin add` \
+         puts it: {want}"
+    );
+    assert!(
+        root().join("install.sh").exists(),
+        "the path the README names has to be a file this repository ships"
+    );
+
+    let menu = std::fs::read_to_string(root().join("Menu.qml")).expect("Menu.qml");
+    assert!(
+        menu.contains("Qt.resolvedUrl(\"install.sh\")"),
+        "Menu.qml must derive the installer path from its own URL; the \
+         installer is this file's sibling, and a path written out by hand is \
+         wrong in every checkout and after every `omarchy plugin clone`"
+    );
+    for line in menu.lines().filter(|l| !l.trim_start().starts_with("//")) {
+        assert!(
+            !line.contains("omarchy/plugins/"),
+            "Menu.qml hard-codes a plugins path; the id belongs in \
+             manifest.json and nowhere else:\n{line}"
+        );
+    }
+
+    // The copied command is the dry run, and it is shell-safe: the path runs
+    // through $HOME, which is not this plugin's to assume is well behaved.
+    let at = menu
+        .find("function copyInstallCommand(")
+        .expect("Menu.qml defines copyInstallCommand");
+    let body = &menu[at..];
+    let end = body.find("\n  }").expect("copyInstallCommand is closed");
+    let body = &body[..end];
+    assert!(
+        body.contains("shellQuote(root.installerPath)"),
+        "the install button builds a command line from an unquoted \
+         path:\n{body}"
+    );
+    assert!(
+        body.contains("--dry-run"),
+        "the install button should copy the dry run, which is the step that \
+         touches nothing:\n{body}"
+    );
+}

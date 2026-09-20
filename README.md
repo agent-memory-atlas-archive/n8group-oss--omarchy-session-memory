@@ -16,12 +16,12 @@ both in the tree; neither has been released or submitted yet.
 
 ## Building
 
-Most people do not need this. [Installing from a
-release](#installing-from-a-release) downloads a prebuilt `osm` and verifies
-it against the SHA-256 that the workflow which built it wrote into the
-installer — no toolchain, no build, and a check that a source install cannot
-make. Build from source to work on osm itself, or on a machine this release
-ships no binary for.
+Most people do not need this. [Installing the engine from a
+release](#installing-the-engine-from-a-release) runs the `install.sh` that
+shipped with the plugin, which downloads a prebuilt `osm` and verifies it
+against a SHA-256 held in this repository — no toolchain, no build, and a
+check that a source install cannot make. Build from source to work on osm
+itself, or on a machine this release ships no binary for.
 
 ```bash
 cargo build --release
@@ -266,24 +266,85 @@ To remove it again:
 omarchy plugin remove io.github.n8group-oss.sessionmemory
 ```
 
-## Installing from a release
+## Installing the engine from a release
 
-Each `v*` tag builds `osm` for `x86_64-unknown-linux-gnu` on a GitHub-hosted
-runner and publishes three files: the binary, its SHA-256, and an `install.sh`
-**with that build's digest written into it**. The script downloads the binary,
-verifies it against the digest it was built with, and hands the verified copy
-to `osm install`; it does not fetch a checksum from the same place it fetched
-the binary, which would check for corruption and for nothing else.
+**The installer came with the plugin. There is nothing to download to get it.**
+
+`install.sh` sits at the root of this repository, so it is part of the exact
+commit the Omarchy marketplace validates — and `omarchy plugin add` git-clones
+this repository into `~/.config/omarchy/plugins/<id>/`, which puts that
+reviewed script on your machine along with the QML. Run the copy you already
+have:
 
 ```bash
-curl -fsSLO https://github.com/n8group-oss/omarchy-session-memory/releases/download/v0.1.0/install.sh
-sh install.sh --dry-run   # prints every step, touches nothing
-sh install.sh
+sh ~/.config/omarchy/plugins/io.github.n8group-oss.sessionmemory/install.sh --dry-run
+sh ~/.config/omarchy/plugins/io.github.n8group-oss.sessionmemory/install.sh
 ```
 
-Arguments are passed through to `osm install`, so `--prefix` works the same
-way there. Nothing in the QML ever downloads anything: the plugin runs the
-engine that is already on the machine, or says there is none.
+The first line prints every step and touches nothing. The panel shows the same
+two commands with the path filled in, and its **Copy install command** button
+copies the dry run.
+
+The script downloads `osm-x86_64-unknown-linux-gnu` from a tag-pinned release
+URL, checks it against a SHA-256 **written into the script in this
+repository**, and refuses to install anything at all if they differ. Arguments
+are passed through to `osm install`, so `--prefix` works the same way there.
+
+### Why the digest lives here and not in the release
+
+An earlier version of this told you to `curl` an `install.sh` out of the
+v0.1.0 release and run it. That script also carried a SHA-256, and the
+marketplace's security review of `58cc3f4` rejected the arrangement — rightly.
+A tag and a release asset are both replaceable. If the release were replaced,
+or the publisher's account taken, the executable script *and* the digest it
+claimed would change together, and the plugin a reviewer had read contained
+nothing to contradict either. The trust anchor was inside the artifact it was
+vouching for.
+
+Now the anchor is in the validated source. The digest is a literal in
+`install.sh` in this tree; the marketplace reviews that commit; `omarchy
+plugin add` copies it verbatim. Nothing is fetched before anything is
+executed, so there is no script to verify before running and no chicken and
+egg to solve. `tests/installer.rs` keeps it honest, including a check that the
+in-tree digest is the one the release actually published — it fetches the
+release's `.sha256` and compares, and skips with a printed reason when there
+is no network.
+
+The release still publishes `osm-x86_64-unknown-linux-gnu.sha256` beside the
+binary. That is a convenience for anyone reading the releases page, not the
+trust root, and the installer deliberately does not read it: verifying a
+download against a checksum served by whoever served the download checks for
+corruption and for nothing else.
+
+Nothing in the QML ever downloads anything: the plugin runs the engine that is
+already on the machine, or says there is none.
+
+### Cutting a release
+
+The digest of a build cannot be known before the build exists, so the value in
+`install.sh` is always written **after** the release it names. That ordering is
+the one sharp edge here, and it is deliberate rather than an oversight:
+
+1. On a branch — not `main` — bump `version` in `Cargo.toml` and
+   `manifest.json` to the new version. From this moment
+   `the_installer_downloads_from_the_tag_of_this_version` fails, because
+   `install.sh` still names the previous release. That is correct: the tree is
+   mid-release and is not a tree to submit for validation.
+2. Push the `vX.Y.Z` tag at that branch. `release.yml` checks that the tag,
+   the crate and the manifest agree, builds in a digest-pinned
+   `rust:1-bookworm` container, and publishes the binary and its `.sha256`.
+3. Take the published digest — `curl -fsSL .../vX.Y.Z/osm-x86_64-unknown-linux-gnu.sha256`,
+   or read it off the release page — and write it, with the new `TAG`, into
+   `install.sh`. Commit that on the same branch. The suite goes green again,
+   and `the_in_tree_digest_is_the_one_that_release_published` now really
+   checks the published asset.
+4. Merge to `main`, so `main` is never red, and submit **that** commit to the
+   marketplace for validation.
+
+Do not "fix" a digest mismatch by copying whatever the release currently
+serves into `install.sh`. A mismatch is either an unfinished release or the
+substitution this whole arrangement exists to catch, and those need telling
+apart before anything is committed.
 
 Building from source works too, and is the only route on a non-x86_64
 machine:
